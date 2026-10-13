@@ -455,3 +455,24 @@ describe('AQL and reports', () => {
     expect(rep.rows[0].values['2026-01']).toBe(30000);
   });
 });
+
+describe('ids', () => {
+  it('makes valid v4 UUIDs without crypto.randomUUID (insecure browser contexts)', async () => {
+    const { uuid } = await import('./util/id');
+    const original = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      const ids = new Set(Array.from({ length: 2000 }, () => uuid()));
+      expect(ids.size).toBe(2000);
+      for (const id of [...ids].slice(0, 50)) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      // The whole write path still works.
+      const db = await emptyDb();
+      const g = createGroup(db, { name: 'G' });
+      const acct = createAccount(db, { name: 'A', balance: 100 });
+      createCategory(db, { name: 'C', group: g });
+      expect(getAccounts(db).find(a => a.id === acct)?.balance).toBe(100);
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', { value: original, configurable: true });
+    }
+  });
+});

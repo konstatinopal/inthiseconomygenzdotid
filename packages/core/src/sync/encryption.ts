@@ -3,7 +3,12 @@
 // contents and file snapshots are encrypted before they leave the device.
 import { base64ToBytes, bytesToBase64 } from '../util/base64';
 
-const subtle = () => globalThis.crypto.subtle;
+const subtle = () => {
+  // Web Crypto's subtle API exists only in secure contexts (HTTPS or localhost).
+  const s = globalThis.crypto?.subtle;
+  if (!s) throw new Error('End-to-end encryption needs a secure connection. Open the app over HTTPS (or on localhost).');
+  return s;
+};
 
 export function randomSalt(): string {
   const b = new Uint8Array(32);

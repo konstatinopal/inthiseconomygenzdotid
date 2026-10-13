@@ -7,6 +7,7 @@ import { describeRecurrence, getOccurrences, isRecurConfig, nextOccurrence, type
 import { createRule, toRule, type Condition } from './rules';
 import { setScheduleLinkedHook } from './schedule-hooks';
 import { addTransaction } from './transactions';
+import { uuid } from '../util/id';
 
 export type AmountOp = 'is' | 'isapprox' | 'isbetween';
 export type ScheduleStatus = 'completed' | 'missed' | 'due' | 'upcoming' | 'paid' | 'scheduled';
@@ -119,7 +120,7 @@ export function createSchedule(db: BudgetDb, input: ScheduleInput): string {
       const dup = db.first('SELECT 1 FROM schedules WHERE lower(name) = lower(?) AND tombstone = 0', [input.name]);
       if (dup) throw new Error('A schedule with this name already exists');
     }
-    const id = globalThis.crypto.randomUUID();
+    const id = uuid();
     const ruleId = createRule(db, {
       stage: null,
       conditionsOp: 'and',

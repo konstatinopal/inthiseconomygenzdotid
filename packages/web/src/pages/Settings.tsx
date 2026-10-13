@@ -220,13 +220,16 @@ export function SettingsPage() {
             </>
           ) : (
             <>
+              {!window.isSecureContext && (
+                <p className="warn small">End-to-end encryption needs a secure connection. Open the app over HTTPS (or on localhost) to turn it on.</p>
+              )}
               <p className="muted small">
                 Encrypt everything before it leaves this device (AES-256-GCM, key derived from your password). If you lose the password, the server copy can’t be recovered — your local copy is unaffected.
               </p>
               <div>
                 <button
                   className="primary"
-                  disabled={busy || !canManage}
+                  disabled={busy || !canManage || !window.isSecureContext}
                   title={ownerOnly}
                   onClick={async () => {
                     const password = await promptDialog({ title: 'Enable encryption', label: 'Choose an encryption password', type: 'password' });

@@ -1,10 +1,13 @@
 # Production deployment of inthiseconomygenz.id.
 #
 #   cp .env.example .env      # then fill in the values
-#   docker compose up -d                    # app + HTTPS
-#   docker compose --profile api up -d      # also the HTTP API for curl
+#   docker compose up -d --build                  # the app
+#   docker compose --profile api up -d --build    # also the HTTP API for curl
 #
-# Budgets, users and certificates live in named volumes; back up `app-data`.
+# Ports are published on 127.0.0.1 by default, for a reverse proxy or load
+# balancer on this host that terminates HTTPS. Set APP_BIND=0.0.0.0 to expose
+# a port to the network directly.
+# Budgets and users live in the `app-data` volume: back it up.
 
 name: inthiseconomygenz
 
@@ -13,9 +16,11 @@ services:
     build: .
     image: inthiseconomygenz:latest
     restart: unless-stopped
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-5006}:5006"
     environment:
       ENVELOPE_LOGIN_METHOD: multiuser
-      ENVELOPE_PUBLIC_URL: https://${APP_DOMAIN:?set APP_DOMAIN in .env}
+      ENVELOPE_PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
       ENVELOPE_ADMIN_USER: ${ADMIN_USER:-admin}
       ENVELOPE_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       ENVELOPE_ADMIN_EMAIL: ${ADMIN_EMAIL:-}
@@ -23,14 +28,13 @@ services:
       ENVELOPE_OPENID_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       ENVELOPE_OPENID_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       ENVELOPE_ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}
-      # Caddy sits on this network: trust it so rate limits see real client IPs.
-      ENVELOPE_TRUSTED_PROXIES: 172.30.0.0/24
+      # Addresses of your reverse proxy, so login rate limits see real client
+      # IPs. Leave empty when clients connect directly.
+      ENVELOPE_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       ENVELOPE_UPLOAD_LIMIT_MB: ${UPLOAD_LIMIT_MB:-50}
     volumes:
       - app-data:/data
     networks: [internal]
-    # Not published: only Caddy reaches it.
-    expose: ["5006"]
     logging: &logging
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
@@ -43,6 +47,8 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    ports:
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-5007}:5007"
     environment:
       HEALTH_PORT: "5007"
       ENVELOPE_API_HOST: 0.0.0.0
@@ -56,28 +62,6 @@ services:
     volumes:
       - api-data:/data
     networks: [internal]
-    expose: ["5007"]
-    logging: *logging
-
-  caddy:
-    image: caddy:2.10.0-alpine
-    restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-      API_DOMAIN: ${API_DOMAIN:-api.localhost}
-      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks: [internal]
     logging: *logging
 
 networks:
@@ -89,5 +73,3 @@ networks:
 volumes:
   app-data:
   api-data:
-  caddy-data:
-  caddy-config:

@@ -96,6 +96,13 @@ export function LoginPage() {
           </div>
         </div>
 
+        {!window.isSecureContext && (
+          <div className="insecure-note" role="note">
+            <strong>Not a secure connection.</strong> This page is served over plain HTTP, so your password travels unencrypted and end-to-end
+            encryption is unavailable. Serve the app over HTTPS before using it across a network.
+          </div>
+        )}
+
         {!s ? (
           <div className="muted">Loading…</div>
         ) : changeStep ? (
