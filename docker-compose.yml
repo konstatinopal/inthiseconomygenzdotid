@@ -1,0 +1,93 @@
+# Production deployment of inthiseconomygenz.id.
+#
+#   cp .env.example .env      # then fill in the values
+#   docker compose up -d                    # app + HTTPS
+#   docker compose --profile api up -d      # also the HTTP API for curl
+#
+# Budgets, users and certificates live in named volumes; back up `app-data`.
+
+name: inthiseconomygenz
+
+services:
+  app:
+    build: .
+    image: inthiseconomygenz:latest
+    restart: unless-stopped
+    environment:
+      ENVELOPE_LOGIN_METHOD: multiuser
+      ENVELOPE_PUBLIC_URL: https://${APP_DOMAIN:?set APP_DOMAIN in .env}
+      ENVELOPE_ADMIN_USER: ${ADMIN_USER:-admin}
+      ENVELOPE_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      ENVELOPE_ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      # Google sign-in: leave empty to use passwords only.
+      ENVELOPE_OPENID_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ENVELOPE_OPENID_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      ENVELOPE_ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}
+      # Caddy sits on this network: trust it so rate limits see real client IPs.
+      ENVELOPE_TRUSTED_PROXIES: 172.30.0.0/24
+      ENVELOPE_UPLOAD_LIMIT_MB: ${UPLOAD_LIMIT_MB:-50}
+    volumes:
+      - app-data:/data
+    networks: [internal]
+    # Not published: only Caddy reaches it.
+    expose: ["5006"]
+    logging: &logging
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  http-api:
+    image: inthiseconomygenz:latest
+    profiles: [api]
+    restart: unless-stopped
+    command: ["node", "--import", "tsx", "packages/http-api/src/index.ts"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: "5007"
+      ENVELOPE_API_HOST: 0.0.0.0
+      ENVELOPE_API_PORT: "5007"
+      ENVELOPE_API_DATA_DIR: /data/http-api
+      ENVELOPE_API_KEYS: ${API_KEYS:-}  # required when the api profile runs; the service exits without it
+      ENVELOPE_URL: http://app:5006
+      ENVELOPE_USER: ${API_USER:-admin}
+      ENVELOPE_PASSWORD: ${API_PASSWORD:-}
+      ENVELOPE_KEY_PASSWORD: ${API_KEY_PASSWORD:-}
+    volumes:
+      - api-data:/data
+    networks: [internal]
+    expose: ["5007"]
+    logging: *logging
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN:-api.localhost}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+    logging: *logging
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  app-data:
+  api-data:
+  caddy-data:
+  caddy-config:

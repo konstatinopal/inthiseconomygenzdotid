@@ -1,0 +1,24 @@
+# Caddy gets and renews HTTPS certificates automatically for these names.
+# The DNS records of both names must point at this server, and ports 80/443 must be open.
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	reverse_proxy app:5006
+}
+
+# HTTP API for curl and scripts. Only active with `--profile api`; remove this
+# block if you don't run it.
+{$API_DOMAIN} {
+	encode zstd gzip
+	header -Server
+	reverse_proxy http-api:5007
+}

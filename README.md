@@ -17,7 +17,24 @@ npm run typecheck
 ```
 
 Open the app, click **Try demo** for a populated budget, or **New budget**.
-Docker: `docker build -t envelope . && docker run -p 5006:5006 -v envelope-data:/data envelope`.
+## Production deployment (Docker Compose)
+
+`docker-compose.yml` runs the app behind [Caddy](https://caddyserver.com), which gets and renews HTTPS certificates automatically.
+
+```bash
+cp .env.example .env        # set APP_DOMAIN, ACME_EMAIL, ADMIN_PASSWORD (and Google, API values if used)
+docker compose up -d --build                # app + HTTPS on ports 80/443
+docker compose --profile api up -d --build  # also the HTTP API for curl, on API_DOMAIN
+docker compose logs -f app
+```
+
+Before starting: point the DNS record of `APP_DOMAIN` (and `API_DOMAIN` if you use the HTTP API) at the server and open ports 80 and 443. Then sign in at `https://APP_DOMAIN` as `ADMIN_USER`.
+
+- **Data** lives in named volumes: `app-data` (budgets, users, sessions) and `caddy-data` (certificates). Back up `app-data`, e.g. `docker run --rm -v inthiseconomygenz_app-data:/data -v "$PWD":/backup alpine tar czf /backup/app-data.tgz -C /data .`
+- **Only Caddy is published**; the app and HTTP API are reachable only on the internal network. The app trusts Caddy's subnet so login rate limits see real client IPs.
+- **Google sign-in**: set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and add `https://APP_DOMAIN/openid/callback` as the OAuth redirect URI.
+- **Not using the HTTP API?** Remove the second site block from `deploy/Caddyfile`, so Caddy doesn't try to get a certificate for `API_DOMAIN`.
+- **Upgrading**: `git pull && docker compose up -d --build`. Containers run as a non-root user and have health checks.
 
 ## Multi-user: accounts, login page and Google sign-in
 

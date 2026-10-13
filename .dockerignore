@@ -3,3 +3,8 @@ node_modules
 **/dist
 data
 **/data
+.git
+.env
+.env.*
+!.env.example
+*.log
