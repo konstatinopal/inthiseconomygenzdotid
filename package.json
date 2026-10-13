@@ -1,0 +1,27 @@
+{
+  "name": "envelope",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first envelope budgeting app (rebuild of Actual Budget per PRD)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @envelope/web",
+    "dev:server": "npm run dev -w @envelope/sync-server",
+    "build": "npm run build -w @envelope/web",
+    "start": "npm run build && npm run start -w @envelope/sync-server",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/crdt && tsc -p packages/core && tsc -p packages/web && tsc -p packages/sync-server && tsc -p packages/api && tsc -p packages/http-api",
+    "start:api": "npm run start -w @envelope/http-api"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vitest": "3.2.4",
+    "@types/node": "22.15.30"
+  },
+  "license": "MIT",
+  "overrides": {
+    "react-is": "19.1.0"
+  }
+}

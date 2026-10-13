@@ -1,0 +1,24 @@
+{
+  "name": "@envelope/sync-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/app.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@envelope/crdt": "*",
+    "bcryptjs": "3.0.2",
+    "better-sqlite3": "11.10.0",
+    "cors": "2.8.5",
+    "express": "5.1.0",
+    "tsx": "4.19.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/cors": "2.8.18",
+    "@types/express": "5.0.2"
+  }
+}

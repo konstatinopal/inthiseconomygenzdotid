@@ -1,0 +1,13 @@
+{
+  "name": "@envelope/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@envelope/crdt": "*",
+    "sql.js": "1.13.0"
+  },
+  "devDependencies": { "@types/sql.js": "1.4.9" }
+}
