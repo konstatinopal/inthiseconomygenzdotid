@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { dates } from '@envelope/core';
+import { dates, periodRange } from '@envelope/core';
+import { periodRangeLabel, useCurrentPeriod, useStartDay } from '../lib/periods';
 import { useApp } from '../lib/app';
 import { useQuery } from '../lib/hooks';
 import { Register } from '../components/Register';
@@ -15,11 +16,13 @@ export function CategoryPage() {
   const cat = groups.flatMap(g => g.categories).find(c => c.id === id);
   const [onlyMonth, setOnlyMonth] = useState(!!month);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const end = dates.currentMonth();
+  const startDay = useStartDay();
+  const end = useCurrentPeriod();
+  const monthRange = month ? periodRange(month, startDay) : null;
   const trend = useQuery<{ rows: { id: string; values: Record<string, number> }[]; periods: string[] }>(
     id ? 'report-custom' : null,
-    { start: `${dates.addMonths(end, -11)}-01`, end: dates.lastDay(end), groupBy: 'category', interval: 'monthly', type: cat?.is_income ? 'income' : 'expense', showHidden: true, showUncategorized: false, filter: { conditionsOp: 'and', conditions: [{ field: 'category', op: 'is', value: id }] } },
-    ['transactions'],
+    { start: periodRange(dates.addMonths(end, -11), startDay).start, end: periodRange(end, startDay).end, groupBy: 'category', interval: 'monthly', type: cat?.is_income ? 'income' : 'expense', showHidden: true, showUncategorized: false, filter: { conditionsOp: 'and', conditions: [{ field: 'category', op: 'is', value: id }] } },
+    ['transactions', 'preferences'],
   );
   if (!cat || !id) return <div className="page empty">Category not found.</div>;
   const row = trend.data?.rows[0];
@@ -34,6 +37,7 @@ export function CategoryPage() {
         {month && (
           <label className="check small">
             <input type="checkbox" checked={onlyMonth} onChange={e => setOnlyMonth(e.target.checked)} /> Only {month}
+            {periodRangeLabel(month, startDay) ? ` (${periodRangeLabel(month, startDay)})` : ''}
           </label>
         )}
       </div>
@@ -53,8 +57,8 @@ export function CategoryPage() {
       </div>
       <Register
         category={id}
-        startDate={onlyMonth && month ? `${month}-01` : undefined}
-        endDate={onlyMonth && month ? dates.lastDay(month) : undefined}
+        startDate={onlyMonth && monthRange ? monthRange.start : undefined}
+        endDate={onlyMonth && monthRange ? monthRange.end : undefined}
         columns={{ notes: true, balance: false, account: true }}
         adding={false}
         onAddingChange={() => {}}

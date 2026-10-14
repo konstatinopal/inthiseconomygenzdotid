@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { formatAmount, type NumberFormat } from '@envelope/core';
+import { currentPeriod, dates, formatAmount, MAX_START_DAY, normalizeStartDay, periodRange, type NumberFormat } from '@envelope/core';
 import { useApp, useAction, type Theme } from '../lib/app';
 import { send } from '../lib/client';
 import { useQuery } from '../lib/hooks';
@@ -131,6 +131,8 @@ export function SettingsPage() {
           ))}
         </div>
       </Section>
+
+      <MonthStartSection />
 
       <ServerSettings onChange={() => server.reload()} />
 
@@ -289,5 +291,62 @@ export function SettingsPage() {
         </div>
       </Section>
     </div>
+  );
+}
+
+function ordinal(n: number) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+const fmtDay = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+const monthName = (m: string) => new Date(m + '-01T00:00:00Z').toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+/** Day the budget month starts on, e.g. the 25th when salary arrives on the 25th. */
+function MonthStartSection() {
+  const { prefs, setPref, notify } = useApp();
+  const startDay = normalizeStartDay(prefs.monthStartDay ?? 1);
+  const cur = currentPeriod(startDay);
+  const preview = [cur, dates.addMonths(cur, 1)].map(p => ({ p, ...periodRange(p, startDay) }));
+  return (
+    <Section title="Budget month">
+      <p className="muted small">
+        Choose the day your budget month begins, usually your payday. Spending, To Budget, templates and monthly reports all follow it. A period is
+        named after the month most of its days fall in, so with the 25th, Oct 25 – Nov 24 is November: the month that salary pays for.
+      </p>
+      <label className="field" style={{ maxWidth: 260 }}>
+        Month starts on
+        <select
+          value={startDay}
+          onChange={async e => {
+            const v = Number(e.target.value);
+            await setPref('monthStartDay', v);
+            notify('success', v === 1 ? 'Budget months follow the calendar' : `Budget months now start on the ${ordinal(v)}`);
+          }}
+          aria-label="Month starts on day"
+        >
+          {Array.from({ length: MAX_START_DAY }, (_, i) => i + 1).map(d => (
+            <option key={d} value={d}>
+              {d === 1 ? '1st (calendar month)' : `the ${ordinal(d)}`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="col" style={{ gap: 6 }}>
+        {preview.map((x, i) => (
+          <div key={x.p} className="row small">
+            <span className="badge" style={{ minWidth: 64, justifyContent: 'center' }}>
+              {i === 0 ? 'Current' : 'Next'}
+            </span>
+            <strong style={{ minWidth: 130 }}>{monthName(x.p)}</strong>
+            <span className="muted">
+              {fmtDay(x.start)} – {fmtDay(x.end)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="dim small">Days 29–31 aren’t offered because some months don’t have them. Changing this re-groups past transactions; budgeted amounts stay with their month.</p>
+    </Section>
   );
 }

@@ -2,7 +2,8 @@
 // carryover, To Budget) are computed for every month in one pass from
 // grouped SQL aggregates and cached until a relevant table changes.
 import type { BudgetDb, Row } from '../db';
-import { addMonths, currentMonth, fromMonthInt, monthRange, toMonthInt } from '../util/dates';
+import { addMonths, fromDateInt, fromMonthInt, monthRange, toMonthInt } from '../util/dates';
+import { currentPeriod, normalizeStartDay, periodOf } from '../util/periods';
 
 export type BudgetType = 'envelope' | 'tracking';
 
@@ -82,8 +83,19 @@ function budgetTable(type: BudgetType) {
   return type === 'tracking' ? 'reflect_budgets' : 'zero_budgets';
 }
 
+/** Day of the month budget periods start on (1 = calendar months). A synced preference. */
+export function getMonthStartDay(db: BudgetDb): number {
+  const r = db.first<{ value: string }>("SELECT value FROM preferences WHERE id = 'monthStartDay' AND tombstone = 0");
+  try {
+    return normalizeStartDay(r ? JSON.parse(r.value) : 1);
+  } catch {
+    return 1;
+  }
+}
+
 export function getBudgetBounds(db: BudgetDb): { start: string; end: string } {
-  const cur = currentMonth();
+  const startDay = getMonthStartDay(db);
+  const cur = currentPeriod(startDay);
   const t = db.first<{ lo: number | null; hi: number | null }>(
     'SELECT MIN(date) lo, MAX(date) hi FROM transactions WHERE tombstone = 0 AND date > 0',
   );
@@ -92,9 +104,9 @@ export function getBudgetBounds(db: BudgetDb): { start: string; end: string } {
   );
   let start = cur;
   let end = addMonths(cur, 12);
-  if (t?.lo) start = [start, fromMonthInt(Math.floor(t.lo / 100))].sort()[0];
+  if (t?.lo) start = [start, periodOf(fromDateInt(t.lo), startDay)].sort()[0];
   if (b?.lo) start = [start, fromMonthInt(b.lo)].sort()[0];
-  if (t?.hi) end = [end, fromMonthInt(Math.floor(t.hi / 100))].sort()[1];
+  if (t?.hi) end = [end, periodOf(fromDateInt(t.hi), startDay)].sort()[1];
   if (b?.hi) end = [end, fromMonthInt(b.hi)].sort()[1];
   return { start, end };
 }
@@ -108,14 +120,21 @@ function computeSheet(db: BudgetDb): Sheet {
      WHERE c.tombstone = 0 AND g.tombstone = 0`,
   );
 
+  // Spending per (period, category). Grouping by calendar month and by whether
+  // the day is on/after the start day is enough to place every row in its period.
+  const startDay = getMonthStartDay(db);
   const spent = new Map<string, number>();
   for (const r of db.all<Row>(
-    `SELECT t.category, t.date / 100 AS m, SUM(t.amount) AS s
+    `SELECT t.category, t.date / 100 AS m, (t.date % 100) >= ? AS late, SUM(t.amount) AS s
      FROM transactions t JOIN accounts a ON a.id = t.account
      WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.tombstone = 0 AND a.offbudget = 0 AND t.category IS NOT NULL
-     GROUP BY t.category, m`,
+     GROUP BY t.category, m, late`,
+    [startDay],
   )) {
-    spent.set(`${r.m}:${r.category}`, r.s);
+    const day = startDay === 1 || r.late ? String(Math.max(startDay, 1)).padStart(2, '0') : '01';
+    const period = toMonthInt(periodOf(`${fromMonthInt(r.m)}-${day}`, startDay));
+    const key = `${period}:${r.category}`;
+    spent.set(key, (spent.get(key) ?? 0) + r.s);
   }
 
   const budgets = new Map<string, { amount: number; carryover: number }>();

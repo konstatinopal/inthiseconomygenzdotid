@@ -1,15 +1,20 @@
 import type { BudgetDb, Row } from '../db';
-import { addDays, addMonths, daysInMonth, diffDays, fromDateInt, monthRange, toDateInt } from '../util/dates';
+import { addDays, addMonths, diffDays, fromDateInt, monthRange, toDateInt } from '../util/dates';
+import { periodDays, periodOf, periodRange } from '../util/periods';
+import { getMonthStartDay } from './budget';
 import { ruleMatches, type Condition } from './rules';
 import { accountCtx, toRuleTxn } from './transactions';
 
 const monthInt = (m: string) => parseInt(m.replace('-', ''), 10);
 
-/** Assets, debts and net worth at each month end. */
+/** Assets, debts and net worth at the end of each budget period. */
 export function netWorth(db: BudgetDb, args: { start: string; end: string; accounts?: string[] }) {
+  const sd = getMonthStartDay(db);
   const accounts = db.all<Row>('SELECT id, name FROM accounts WHERE tombstone = 0');
   const ids = new Set(args.accounts?.length ? args.accounts : accounts.map(a => a.id));
-  const startInt = toDateInt(`${args.start}-01`);
+  const months = monthRange(args.start, args.end);
+  const ends = months.map(m => toDateInt(periodRange(m, sd).end));
+  const startInt = toDateInt(periodRange(args.start, sd).start);
   const balances = new Map<string, number>();
   for (const r of db.all<Row>(
     'SELECT account, SUM(amount) s FROM transactions WHERE tombstone = 0 AND is_parent = 0 AND date < ? GROUP BY account',
@@ -17,20 +22,19 @@ export function netWorth(db: BudgetDb, args: { start: string; end: string; accou
   )) {
     balances.set(r.account, r.s);
   }
-  const monthly = new Map<string, number>();
-  for (const r of db.all<Row>(
-    'SELECT account, date / 100 m, SUM(amount) s FROM transactions WHERE tombstone = 0 AND is_parent = 0 AND date >= ? GROUP BY account, m',
+  // Daily sums from the first period on, folded into each period end.
+  const daily = db.all<Row>(
+    'SELECT account, date, SUM(amount) s FROM transactions WHERE tombstone = 0 AND is_parent = 0 AND date >= ? GROUP BY account, date ORDER BY date',
     [startInt],
-  )) {
-    monthly.set(`${r.account}:${r.m}`, r.s);
-  }
-  return monthRange(args.start, args.end).map(month => {
+  );
+  let i = 0;
+  return months.map((month, k) => {
+    for (; i < daily.length && daily[i].date <= ends[k]; i++) balances.set(daily[i].account, (balances.get(daily[i].account) ?? 0) + daily[i].s);
     let assets = 0;
     let debts = 0;
     for (const a of accounts) {
       if (!ids.has(a.id)) continue;
-      const b = (balances.get(a.id) ?? 0) + (monthly.get(`${a.id}:${monthInt(month)}`) ?? 0);
-      balances.set(a.id, b);
+      const b = balances.get(a.id) ?? 0;
       if (b >= 0) assets += b;
       else debts += b;
     }
@@ -38,33 +42,37 @@ export function netWorth(db: BudgetDb, args: { start: string; end: string; accou
   });
 }
 
-/** Income vs expenses per month for on-budget accounts, with a running balance. */
+/** Income vs expenses per budget period for on-budget accounts, with a running balance. */
 export function cashFlow(db: BudgetDb, args: { start: string; end: string; includeTransfers?: boolean }) {
+  const sd = getMonthStartDay(db);
+  const from = periodRange(args.start, sd).start;
+  const to = periodRange(args.end, sd).end;
   const rows = db.all<Row>(
-    `SELECT t.date / 100 m, t.amount, t.transfer_id, ta.offbudget AS other_off
+    `SELECT t.date, t.amount, t.transfer_id, ta.offbudget AS other_off
      FROM transactions t JOIN accounts a ON a.id = t.account
      LEFT JOIN transactions tt ON tt.id = t.transfer_id LEFT JOIN accounts ta ON ta.id = tt.account
      WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.offbudget = 0 AND a.tombstone = 0 AND t.date BETWEEN ? AND ?`,
-    [toDateInt(`${args.start}-01`), toDateInt(`${args.end}-31`)],
+    [toDateInt(from), toDateInt(to)],
   );
   const start = db.first<{ s: number }>(
     `SELECT COALESCE(SUM(t.amount),0) s FROM transactions t JOIN accounts a ON a.id = t.account
      WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.offbudget = 0 AND a.tombstone = 0 AND t.date < ?`,
-    [toDateInt(`${args.start}-01`)],
+    [toDateInt(from)],
   )?.s ?? 0;
-  const by = new Map<number, { income: number; expenses: number; transfers: number }>();
+  const by = new Map<string, { income: number; expenses: number; transfers: number }>();
   for (const r of rows) {
-    const e = by.get(r.m) ?? { income: 0, expenses: 0, transfers: 0 };
+    const m = periodOf(fromDateInt(r.date), sd);
+    const e = by.get(m) ?? { income: 0, expenses: 0, transfers: 0 };
     const isInternal = r.transfer_id && r.other_off === 0;
     if (r.transfer_id && (isInternal || !args.includeTransfers)) {
       e.transfers += r.amount;
     } else if (r.amount > 0) e.income += r.amount;
     else e.expenses += r.amount;
-    by.set(r.m, e);
+    by.set(m, e);
   }
   let balance = start;
   return monthRange(args.start, args.end).map(month => {
-    const e = by.get(monthInt(month)) ?? { income: 0, expenses: 0, transfers: 0 };
+    const e = by.get(month) ?? { income: 0, expenses: 0, transfers: 0 };
     balance += e.income + e.expenses + e.transfers;
     return { month, income: e.income, expenses: e.expenses, net: e.income + e.expenses, balance };
   });
@@ -87,7 +95,7 @@ export interface CustomReportArgs {
   excludeCategories?: string[];
 }
 
-function periodKey(date: number, interval: Interval): string {
+function periodKey(date: number, interval: Interval, startDay = 1): string {
   const d = fromDateInt(date);
   switch (interval) {
     case 'daily':
@@ -97,7 +105,7 @@ function periodKey(date: number, interval: Interval): string {
       return addDays(d, -dt.getUTCDay());
     }
     case 'monthly':
-      return d.slice(0, 7);
+      return periodOf(d, startDay);
     case 'yearly':
       return d.slice(0, 4);
     default:
@@ -105,9 +113,9 @@ function periodKey(date: number, interval: Interval): string {
   }
 }
 
-export function periods(start: string, end: string, interval: Interval): string[] {
+export function periods(start: string, end: string, interval: Interval, startDay = 1): string[] {
   if (interval === 'total') return ['total'];
-  if (interval === 'monthly') return monthRange(start.slice(0, 7), end.slice(0, 7));
+  if (interval === 'monthly') return monthRange(periodOf(start, startDay), periodOf(end, startDay));
   if (interval === 'yearly') {
     const out = [];
     for (let y = +start.slice(0, 4); y <= +end.slice(0, 4); y++) out.push(String(y));
@@ -162,13 +170,14 @@ function groupKey(r: Row, groupBy: GroupBy): [string, string] {
 }
 
 export function customReport(db: BudgetDb, args: CustomReportArgs) {
-  const ps = periods(args.start, args.end, args.interval);
+  const sd = getMonthStartDay(db);
+  const ps = periods(args.start, args.end, args.interval, sd);
   const groups = new Map<string, { id: string; name: string; total: number; values: Record<string, number> }>();
   const totals: Record<string, number> = Object.fromEntries(ps.map(p => [p, 0]));
   for (const r of reportRows(db, args)) {
     const [id, name] = groupKey(r, args.groupBy);
     const g = groups.get(id) ?? { id, name, total: 0, values: Object.fromEntries(ps.map(p => [p, 0])) };
-    const p = periodKey(r.date, args.interval);
+    const p = periodKey(r.date, args.interval, sd);
     const amount = args.type === 'expense' ? -r.amount : r.amount;
     g.values[p] = (g.values[p] ?? 0) + amount;
     g.total += amount;
@@ -188,59 +197,64 @@ export function customReport(db: BudgetDb, args: CustomReportArgs) {
 
 /** Transactions behind one bar / cell of a custom report. */
 export function reportDrilldown(db: BudgetDb, args: CustomReportArgs & { groupId?: string; period?: string }) {
+  const sd = getMonthStartDay(db);
   return reportRows(db, args)
     .filter(r => (args.groupId ? groupKey(r, args.groupBy)[0] === args.groupId : true))
-    .filter(r => (args.period && args.period !== 'total' ? periodKey(r.date, args.interval) === args.period : true))
+    .filter(r => (args.period && args.period !== 'total' ? periodKey(r.date, args.interval, sd) === args.period : true))
     .map(r => r.id as string);
 }
 
-/** Cumulative spending by day: this month vs last month and the 3-month average, plus the budgeted total. */
+/** Cumulative spending by day of the budget period: this period vs the last one and the 3-period average, plus the budgeted total. */
 export function spendingAnalysis(db: BudgetDb, month: string) {
+  const sd = getMonthStartDay(db);
   const dayTotals = (m: string) => {
-    const arr = new Array(31).fill(0);
+    const days = periodDays(m, sd);
+    const index = new Map(days.map((d, i) => [toDateInt(d), i]));
+    const arr = new Array(Math.max(days.length, 31)).fill(0);
     for (const r of db.all<Row>(
-      `SELECT t.date % 100 d, SUM(t.amount) s FROM transactions t JOIN accounts a ON a.id = t.account
+      `SELECT t.date, SUM(t.amount) s FROM transactions t JOIN accounts a ON a.id = t.account
        LEFT JOIN categories c ON c.id = t.category
        WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.offbudget = 0 AND t.category IS NOT NULL AND c.is_income = 0
-       AND t.date / 100 = ? GROUP BY d`,
-      [monthInt(m)],
+       AND t.date BETWEEN ? AND ? GROUP BY t.date`,
+      [toDateInt(days[0]), toDateInt(days.at(-1)!)],
     ))
-      arr[r.d - 1] = -r.s;
+      arr[index.get(r.date)!] = -r.s;
     let run = 0;
     return arr.map(v => (run += v));
   };
+  const days = periodDays(month, sd);
   const cur = dayTotals(month);
   const last = dayTotals(addMonths(month, -1));
   const avgParts = [1, 2, 3].map(i => dayTotals(addMonths(month, -i)));
-  const days = daysInMonth(month);
   const budgeted =
     db.first<{ s: number }>('SELECT COALESCE(SUM(b.amount),0) s FROM zero_budgets b JOIN categories c ON c.id = b.category WHERE b.month = ? AND b.tombstone = 0 AND c.is_income = 0 AND c.tombstone = 0', [
       monthInt(month),
     ])?.s ?? 0;
   const todayStr = new Date().toISOString().slice(0, 10);
-  return Array.from({ length: days }, (_, i) => {
-    const date = `${month}-${String(i + 1).padStart(2, '0')}`;
-    return {
-      day: i + 1,
-      current: date <= todayStr ? cur[i] : null,
-      lastMonth: last[i],
-      average: Math.round(avgParts.reduce((s, a) => s + a[i], 0) / 3),
-      budgeted,
-    };
-  });
+  return days.map((date, i) => ({
+    day: i + 1,
+    date,
+    current: date <= todayStr ? cur[i] : null,
+    lastMonth: last[i],
+    average: Math.round(avgParts.reduce((s, a) => s + a[i], 0) / 3),
+    budgeted,
+  }));
 }
 
-/** Daily income and expenses for a month. */
+/** Daily income and expenses across a budget period. */
 export function calendar(db: BudgetDb, month: string) {
-  const out = Array.from({ length: daysInMonth(month) }, (_, i) => ({ date: `${month}-${String(i + 1).padStart(2, '0')}`, income: 0, expenses: 0 }));
+  const days = periodDays(month, getMonthStartDay(db));
+  const out = days.map(date => ({ date, income: 0, expenses: 0 }));
+  const index = new Map(days.map((d, i) => [toDateInt(d), i]));
   for (const r of db.all<Row>(
-    `SELECT t.date % 100 d, t.amount FROM transactions t JOIN accounts a ON a.id = t.account
+    `SELECT t.date, t.amount FROM transactions t JOIN accounts a ON a.id = t.account
      LEFT JOIN transactions tt ON tt.id = t.transfer_id LEFT JOIN accounts ta ON ta.id = tt.account
-     WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.offbudget = 0 AND t.date / 100 = ? AND (t.transfer_id IS NULL OR ta.offbudget = 1)`,
-    [monthInt(month)],
+     WHERE t.tombstone = 0 AND t.is_parent = 0 AND a.offbudget = 0 AND t.date BETWEEN ? AND ? AND (t.transfer_id IS NULL OR ta.offbudget = 1)`,
+    [toDateInt(days[0]), toDateInt(days.at(-1)!)],
   )) {
-    if (r.amount > 0) out[r.d - 1].income += r.amount;
-    else out[r.d - 1].expenses += r.amount;
+    const o = out[index.get(r.date)!];
+    if (r.amount > 0) o.income += r.amount;
+    else o.expenses += r.amount;
   }
   return out;
 }
@@ -280,8 +294,9 @@ export function ageOfMoney(db: BudgetDb, args: { start: string; end: string }) {
     }
     if (used > 0) ages.push({ date, age: weighted / used });
   }
+  const sd = getMonthStartDay(db);
   return monthRange(args.start, args.end).map(month => {
-    const until = `${month}-31`;
+    const until = periodRange(month, sd).end;
     const last = ages.filter(a => a.date <= until).slice(-10);
     return { month, age: last.length ? Math.round(last.reduce((s, a) => s + a.age, 0) / last.length) : null };
   });

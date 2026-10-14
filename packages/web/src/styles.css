@@ -447,3 +447,4 @@ table.grid tr.selected td { background: var(--accent-soft); }
   .register.card { overflow-x: auto !important; }
   .register > .reg-head, .register > .reg-scroll { min-width: 760px; }
 }
+.period-range { font-family: var(--font); font-size: 12px; font-weight: 500; color: var(--text-3); }

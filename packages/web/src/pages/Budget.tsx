@@ -4,6 +4,7 @@ import { dates, goalStatus, type CategoryEntity, type CategoryGroupEntity, type 
 import { useApp, useAction } from '../lib/app';
 import { send } from '../lib/client';
 import { useLocalStorage, useMediaQuery, useQuery } from '../lib/hooks';
+import { periodRangeLabel, useCurrentPeriod, useStartDay } from '../lib/periods';
 import { Icon } from '../components/Icon';
 import { Amount, AmountInput, MenuButton, Modal, Popover, confirmDialog, promptDialog } from '../components/ui';
 import { NotesModal } from '../components/NotesModal';
@@ -23,7 +24,10 @@ export function BudgetPage() {
   const mid = useMediaQuery('(min-width: 1100px)');
   const [monthCount, setMonthCount] = useLocalStorage<number | 'auto'>('budgetMonths', 'auto');
   const count = monthCount === 'auto' ? (wide ? 3 : mid ? 2 : 1) : monthCount;
-  const [start, setStart] = useState(dates.currentMonth());
+  const current = useCurrentPeriod();
+  // null = follow the current period (it moves if the start day setting changes).
+  const [picked, setStart] = useState<string | null>(null);
+  const start = picked ?? current;
   const [showHidden, setShowHidden] = useLocalStorage('budgetShowHidden', false);
   const [collapsed, setCollapsed] = useLocalStorage<string[]>('budgetCollapsed', []);
   const bounds = useQuery<{ start: string; end: string }>('budget-bounds', {}, ['transactions', 'zero_budgets']);
@@ -80,7 +84,7 @@ export function BudgetPage() {
           <button className="icon" disabled={!canPrev} onClick={() => setStart(dates.addMonths(start, -1))} aria-label="Previous month">
             <Icon name="left" />
           </button>
-          <button onClick={() => setStart(dates.currentMonth())}>Today</button>
+          <button onClick={() => setStart(null)}>Today</button>
           <button className="icon" disabled={!canNext} onClick={() => setStart(dates.addMonths(start, 1))} aria-label="Next month">
             <Icon name="right" />
           </button>
@@ -298,7 +302,9 @@ function MonthSummary({ month, tracking, onNotes }: { month: string; tracking: b
   const { data } = useMonth(month);
   const act = useAction();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const isCurrent = month === dates.currentMonth();
+  const startDay = useStartDay();
+  const isCurrent = month === useCurrentPeriod();
+  const range = periodRangeLabel(month, startDay);
   const menu = [
     { label: 'Copy last month’s budget', onClick: () => act('budget-month-action', { month, action: 'copy-last' }) },
     { label: 'Set budgets to zero', onClick: () => act('budget-month-action', { month, action: 'set-zero' }) },
@@ -321,7 +327,10 @@ function MonthSummary({ month, tracking, onNotes }: { month: string; tracking: b
   return (
     <div className="month-summary">
       <div className={`month-title ${isCurrent ? 'current' : ''}`}>
-        <span>{monthLabel(month)}</span>
+        <span className="col" style={{ gap: 0 }}>
+          <span>{monthLabel(month)}</span>
+          {range && <span className="period-range">{range}</span>}
+        </span>
         <MenuButton title="Month actions" items={menu} align="right">
           <Icon name="more" />
         </MenuButton>

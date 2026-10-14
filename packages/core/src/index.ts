@@ -13,3 +13,4 @@ export { goalStatus } from './models/templates';
 export * as dates from './util/dates';
 export { formatAmount, parseAmount, type NumberFormat, type FormatOptions } from './util/amounts';
 export { DATE_FORMATS, type ParsedTransaction, type ImportPreviewRow, type FileFormat } from './importers';
+export { periodOf, periodRange, currentPeriod, periodDays, normalizeStartDay, MIN_START_DAY, MAX_START_DAY } from './util/periods';

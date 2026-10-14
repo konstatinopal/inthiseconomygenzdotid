@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { dates, type TransactionEntity } from '@envelope/core';
+import { dates, periodRange, type TransactionEntity } from '@envelope/core';
+import { periodRangeLabel, useCurrentPeriod, useStartDay } from '../lib/periods';
 import { useApp } from '../lib/app';
 import { useLocalStorage, useQuery } from '../lib/hooks';
 import { Icon } from '../components/Icon';
 import { Amount, Modal } from '../components/ui';
 import { REPORTS, SERIES } from './reports/catalog';
 
-const TABLES = ['transactions', 'accounts', 'categories', 'category_groups', 'payees', 'zero_budgets'];
+const TABLES = ['transactions', 'accounts', 'categories', 'category_groups', 'payees', 'zero_budgets', 'preferences'];
 
 type Range = { preset: string; start: string; end: string };
 
-function presetRange(preset: string): { start: string; end: string } {
-  const cur = dates.currentMonth();
+/** Presets count budget periods back from the current one. */
+function presetRange(preset: string, cur: string): { start: string; end: string } {
   switch (preset) {
     case 'this-month':
       return { start: cur, end: cur };
@@ -35,13 +36,15 @@ function presetRange(preset: string): { start: string; end: string } {
 }
 
 function useRange(key: string, def = '12m') {
-  const [r, setR] = useLocalStorage<Range>(`report-range-${key}`, { preset: def, ...presetRange(def) });
+  const cur = useCurrentPeriod();
+  const [r, setR] = useLocalStorage<Range>(`report-range-${key}`, { preset: def, ...presetRange(def, cur) });
   // Live presets re-resolve every visit; custom ranges stay static.
-  const resolved = r.preset === 'custom' ? r : { ...r, ...presetRange(r.preset) };
+  const resolved = r.preset === 'custom' ? r : { ...r, ...presetRange(r.preset, cur) };
   return [resolved, setR] as const;
 }
 
 function RangePicker({ range, onChange, bounds }: { range: Range; onChange: (r: Range) => void; bounds?: { start: string } }) {
+  const cur = useCurrentPeriod();
   return (
     <div className="row wrap">
       <select
@@ -49,7 +52,7 @@ function RangePicker({ range, onChange, bounds }: { range: Range; onChange: (r: 
         aria-label="Date range"
         onChange={e => {
           const p = e.target.value;
-          onChange(p === 'custom' ? { ...range, preset: p } : { preset: p, ...presetRange(p) });
+          onChange(p === 'custom' ? { ...range, preset: p } : { preset: p, ...presetRange(p, cur) });
         }}
       >
         <option value="this-month">This month</option>
@@ -328,8 +331,11 @@ function CashFlow({ compact }: { compact?: boolean }) {
 }
 
 function Spending({ compact }: { compact?: boolean }) {
-  const [month, setMonth] = useState(dates.currentMonth());
-  const q = useQuery<{ day: number; current: number | null; lastMonth: number; average: number; budgeted: number }[]>('report-spending', { month }, TABLES);
+  const current = useCurrentPeriod();
+  const startDay = useStartDay();
+  const [picked, setMonth] = useState<string | null>(null);
+  const month = picked ?? current;
+  const q = useQuery<{ day: number; date: string; current: number | null; lastMonth: number; average: number; budgeted: number }[]>('report-spending', { month }, [...TABLES, 'preferences']);
   const axis = useAxisFmt();
   const data = q.data ?? [];
   const today = data.filter(d => d.current !== null).at(-1);
@@ -341,6 +347,7 @@ function Spending({ compact }: { compact?: boolean }) {
             <Icon name="left" />
           </button>
           <strong>{monthShort(month)}</strong>
+          {periodRangeLabel(month, startDay) && <span className="period-range">{periodRangeLabel(month, startDay)}</span>}
           <button className="icon" onClick={() => setMonth(dates.addMonths(month, 1))} aria-label="Next month">
             <Icon name="right" />
           </button>
@@ -377,9 +384,9 @@ function Spending({ compact }: { compact?: boolean }) {
         <ResponsiveContainer>
           <LineChart data={data} margin={{ top: 8, right: 8, left: compact ? 0 : 8, bottom: 0 }}>
             {!compact && <CartesianGrid vertical={false} />}
-            <XAxis dataKey="day" hide={compact} tickLine={false} axisLine={false} />
+            <XAxis dataKey="day" hide={compact} tickLine={false} axisLine={false} tickFormatter={(d: number) => (data[d - 1]?.date ?? '').slice(8).replace(/^0/, '')} />
             <YAxis tickFormatter={axis} hide={compact} width={80} tickLine={false} axisLine={false} />
-            <Tooltip content={<ChartTip labelFmt={(d: number) => `Day ${d}`} />} />
+            <Tooltip content={<ChartTip labelFmt={(d: number) => { const date = data[d - 1]?.date; return date ? new Date(date + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ` (day ${d})` : `Day ${d}`; }} />} />
             <Line dataKey="average" name="3-month average" stroke="var(--series-3)" strokeWidth={2} strokeDasharray="4 3" dot={false} />
             <Line dataKey="lastMonth" name="Last month" stroke="var(--series-2)" strokeWidth={2} dot={false} />
             <Line dataKey="current" name="This month" stroke="var(--series-1)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls={false} />
@@ -402,6 +409,7 @@ interface CustomCfg {
 }
 
 function Custom({ compact }: { compact?: boolean }) {
+  const startDay = useStartDay();
   const [range, setRange] = useRange('custom', '6m');
   const [cfg, setCfg] = useLocalStorage<CustomCfg>('report-custom', {
     groupBy: 'category',
@@ -417,8 +425,8 @@ function Custom({ compact }: { compact?: boolean }) {
   const set = (p: Partial<CustomCfg>) => setCfg({ ...cfg, ...p });
   const interval = compact ? 'total' : cfg.interval;
   const args = {
-    start: `${range.start}-01`,
-    end: dates.lastDay(range.end),
+    start: periodRange(range.start, startDay).start,
+    end: periodRange(range.end, startDay).end,
     groupBy: cfg.groupBy,
     interval,
     type: cfg.type,
@@ -675,7 +683,10 @@ function DrilldownModal({ args, title, onClose }: { args: any; title: string; on
 
 function CalendarReport({ compact }: { compact?: boolean }) {
   const { fmt, privacy } = useApp();
-  const [month, setMonth] = useState(dates.currentMonth());
+  const current = useCurrentPeriod();
+  const startDay = useStartDay();
+  const [picked, setMonth] = useState<string | null>(null);
+  const month = picked ?? current;
   const q = useQuery<{ date: string; income: number; expenses: number }[]>('report-calendar', { month }, TABLES);
   const days = q.data ?? [];
   const max = Math.max(1, ...days.map(d => -d.expenses));
@@ -691,6 +702,7 @@ function CalendarReport({ compact }: { compact?: boolean }) {
             <Icon name="left" />
           </button>
           <strong>{monthShort(month)}</strong>
+          {periodRangeLabel(month, startDay) && <span className="period-range">{periodRangeLabel(month, startDay)}</span>}
           <button className="icon" onClick={() => setMonth(dates.addMonths(month, 1))} aria-label="Next month">
             <Icon name="right" />
           </button>

@@ -140,6 +140,7 @@ describe('HTTP API', () => {
   it('reports a budget month', async () => {
     const m = await call('GET', '/v1/budgets/Household/months/2026-10');
     expect(m.body.data).toHaveProperty('to_budget');
+    expect(m.body.data).toMatchObject({ start: '2026-10-01', end: '2026-10-31' });
     expect(m.body.data.categories.find((c: any) => c.name === 'Groceries')).toHaveProperty('spent');
     expect((await call('GET', '/v1/budgets/Household/months/oct')).status).toBe(400);
   }, 30_000);

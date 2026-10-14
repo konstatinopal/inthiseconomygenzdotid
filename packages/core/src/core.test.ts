@@ -476,3 +476,50 @@ describe('ids', () => {
     }
   });
 });
+
+describe('custom month start day', () => {
+  it('puts salary on the 25th into the next budget period, and everything agrees', async () => {
+    const { setPref } = await import('./models/misc');
+    const { runTemplates } = await import('./models/templates');
+    setPref(db, 'monthStartDay', 25);
+    // Payday Oct 25 → the "November" period (Oct 25 – Nov 24).
+    addTransaction(db, { account: checking, date: '2026-10-25', amount: 300000, category: salary });
+    addTransaction(db, { account: checking, date: '2026-10-24', amount: -1000, category: food }); // still October
+    addTransaction(db, { account: checking, date: '2026-10-26', amount: -2000, category: food }); // November
+    addTransaction(db, { account: checking, date: '2026-11-24', amount: -3000, category: food }); // November (last day)
+    addTransaction(db, { account: checking, date: '2026-11-25', amount: -4000, category: food }); // December
+    const oct = getBudgetMonth(db, '2026-10');
+    const nov = getBudgetMonth(db, '2026-11');
+    const dec = getBudgetMonth(db, '2026-12');
+    expect(oct.categories[food].spent).toBe(-1000);
+    expect(oct.income).toBe(0);
+    expect(nov.income).toBe(300000);
+    expect(nov.categories[food].spent).toBe(-5000);
+    expect(dec.categories[food].spent).toBe(-4000);
+
+    // Reports bucket the same way.
+    const rep = customReport(db, { start: '2026-09-25', end: '2026-12-24', groupBy: 'category', interval: 'monthly', type: 'expense' });
+    expect(rep.periods).toEqual(['2026-10', '2026-11', '2026-12']);
+    expect(rep.rows.find(r => r.id === food)!.values).toEqual({ '2026-10': 1000, '2026-11': 5000, '2026-12': 4000 });
+    const cf = cashFlow(db, { start: '2026-10', end: '2026-11' });
+    expect(cf.map(r => r.income)).toEqual([0, 300000]);
+    expect(cf.map(r => r.expenses)).toEqual([-1000, -5000]);
+    const nw = netWorth(db, { start: '2026-10', end: '2026-11' });
+    expect(nw.map(r => r.networth)).toEqual([-1000, 294000]); // balance on Oct 24, then on Nov 24
+
+    // Templates count occurrences inside the period: a weekly 10 starting Oct 26
+    // happens on Oct 26, Nov 2, 9, 16 and 23 → five times in "November".
+    db.upsert('notes', { id: rent, note: '#template 10 repeat every 1 week starting 2026-10-26' });
+    expect(runTemplates(db, '2026-11', { dryRun: true }).amounts[rent]).toBe(5000);
+  });
+
+  it('switching the start day back to 1 restores calendar months', async () => {
+    const { setPref } = await import('./models/misc');
+    setPref(db, 'monthStartDay', 25);
+    addTransaction(db, { account: checking, date: '2026-10-26', amount: -2000, category: food });
+    expect(getBudgetMonth(db, '2026-11').categories[food].spent).toBe(-2000);
+    setPref(db, 'monthStartDay', 1);
+    expect(getBudgetMonth(db, '2026-10').categories[food].spent).toBe(-2000);
+    expect(getBudgetMonth(db, '2026-11').categories[food].spent).toBe(0);
+  });
+});

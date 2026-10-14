@@ -13,9 +13,10 @@
 //   #goal 500                         long-term balance goal (no budgeting)
 //   #cleanup source | sink [weight]   end-of-month sweep
 import type { BudgetDb, Row } from '../db';
-import { addMonths, monthOf, monthRange, firstDay, lastDay } from '../util/dates';
+import { addMonths, monthRange } from '../util/dates';
+import { periodOf, periodRange } from '../util/periods';
 import { getOccurrences, nextOccurrence, type RecurConfig } from '../util/recurrence';
-import { getBudgetMonth, getBudgetType, writeBudgetCell, type MonthBudget } from './budget';
+import { getBudgetMonth, getBudgetType, getMonthStartDay, writeBudgetCell, type MonthBudget } from './budget';
 
 export type Template =
   | { type: 'simple'; priority: number; amount: number | null; limit: number | null; line: string }
@@ -154,6 +155,9 @@ interface Ctx {
 /** Amount (cents) a single template asks for, given the category's state this month. */
 function desired(t: Template, catId: string, ctx: Ctx): number {
   const { db, month, mb } = ctx;
+  // "This month" is the budget period, which may not start on the 1st.
+  const startDay = getMonthStartDay(db);
+  const { start: periodStart, end: periodEnd } = periodRange(month, startDay);
   const cat = mb.categories[catId];
   const carryIn = cat?.carryIn ?? 0;
   switch (t.type) {
@@ -177,7 +181,7 @@ function desired(t: Template, catId: string, ctx: Ctx): number {
         interval: t.n,
         frequency: ({ day: 'daily', week: 'weekly', month: 'monthly', year: 'yearly' } as const)[t.unit],
       };
-      const n = getOccurrences(cfg, firstDay(month), lastDay(month)).length;
+      const n = getOccurrences(cfg, periodStart, periodEnd).length;
       const amt = t.amount * n;
       return t.limit !== null ? Math.max(0, Math.min(amt, t.limit - carryIn)) : amt;
     }
@@ -204,12 +208,12 @@ function desired(t: Template, catId: string, ctx: Ctx): number {
       if (amount <= 0) return 0;
       const cfg = dateCond?.value as RecurConfig;
       if (t.full) {
-        const n = typeof cfg === 'object' ? getOccurrences(cfg, firstDay(month), lastDay(month)).length : monthOf(String(cfg)) === month ? 1 : 0;
+        const n = typeof cfg === 'object' ? getOccurrences(cfg, periodStart, periodEnd).length : periodOf(String(cfg), startDay) === month ? 1 : 0;
         return amount * n;
       }
-      const next = typeof cfg === 'object' ? nextOccurrence(cfg, firstDay(month)) : String(cfg);
+      const next = typeof cfg === 'object' ? nextOccurrence(cfg, periodStart) : String(cfg);
       if (!next) return 0;
-      const remaining = monthsBetween(month, monthOf(next)) + 1;
+      const remaining = monthsBetween(month, periodOf(next, startDay)) + 1;
       return Math.max(0, Math.ceil((amount - carryIn) / Math.max(1, remaining)));
     }
     case 'average': {

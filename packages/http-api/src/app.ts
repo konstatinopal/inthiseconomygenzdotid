@@ -4,7 +4,7 @@
 // the same engine calls the app makes: sync before reads, sync after writes.
 import express, { type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
-import { parseAmount } from '@envelope/core';
+import { normalizeStartDay, parseAmount, periodRange } from '@envelope/core';
 import type { init } from '@envelope/api';
 
 type Api = Awaited<ReturnType<typeof init>>;
@@ -431,9 +431,13 @@ export function createHttpApi(opts: HttpApiOptions) {
       await openBudget(String(req.params.budget), true);
       const l = await lookups();
       const m = await api.send('budget-month', { month });
+      const prefs = await api.send('prefs-get');
+      const { start, end } = periodRange(month, normalizeStartDay(prefs.monthStartDay ?? 1));
       res.json({
         data: {
           month,
+          start,
+          end,
           to_budget: m.toBudget,
           income: m.income,
           budgeted: m.totalBudgeted,
