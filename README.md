@@ -106,6 +106,10 @@ curl -X POST "$U/v1/budgets/Demo%20Budget/transactions" -H "Authorization: Beare
 - Responses include `"synced": true|false`; a failed upload is kept locally and retried on the next request.
 - Security: keys must be 24+ characters. The service holds decrypted budget data, so it listens on 127.0.0.1 by default (`ENVELOPE_API_HOST` to change); put it behind HTTPS before exposing it. End-to-end encrypted budgets need `ENVELOPE_KEY_PASSWORD`.
 
+## WhatsApp assistant (WAHA + n8n + 9router)
+
+`integrations/` has two importable n8n workflows: record transactions and ask questions over WhatsApp (via WAHA, with 9router doing the language understanding), plus a weekly WhatsApp budget report. Setup: [`integrations/README.md`](integrations/README.md).
+
 ## Layout
 
 | Package | Role |

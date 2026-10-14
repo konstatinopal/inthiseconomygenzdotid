@@ -144,4 +144,18 @@ describe('HTTP API', () => {
     expect(m.body.data.categories.find((c: any) => c.name === 'Groceries')).toHaveProperty('spent');
     expect((await call('GET', '/v1/budgets/Household/months/oct')).status).toBe(400);
   }, 30_000);
+
+  it('summarises a period for assistants, in currency units', async () => {
+    await call('POST', '/v1/budgets/Household/transactions', { account: 'Checking', date: '2026-10-13', amount: '-25000', payee: 'Kopi Kenangan', category: 'Coffee' });
+    const r = await call('GET', '/v1/budgets/Household/summary?month=2026-10');
+    expect(r.status).toBe(200);
+    const d = r.body.data;
+    expect(d).toMatchObject({ month: '2026-10', start: '2026-10-01', end: '2026-10-31', amounts_in: expect.stringContaining('currency units') });
+    expect(d.accounts.map((a: any) => a.name)).toContain('Checking');
+    const coffee = d.categories.find((c: any) => c.name === 'Coffee');
+    expect(coffee.spent).toBeGreaterThanOrEqual(25000);
+    expect(d.top_payees.find((p: any) => p.payee === 'Kopi Kenangan')?.spent).toBe(25000);
+    expect(d.recent_transactions.some((t: any) => t.payee === 'Kopi Kenangan' && t.amount === -25000)).toBe(true);
+    expect((await call('GET', '/v1/budgets/Household/summary?month=bad')).status).toBe(400);
+  }, 30_000);
 });

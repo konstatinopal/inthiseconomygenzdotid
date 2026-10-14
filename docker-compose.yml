@@ -19,6 +19,7 @@ services:
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-5006}:5006"
     environment:
+      TZ: ${TZ:-UTC}  # e.g. Asia/Jakarta, so "today" and the current budget period follow local time
       ENVELOPE_LOGIN_METHOD: multiuser
       ENVELOPE_PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
       ENVELOPE_ADMIN_USER: ${ADMIN_USER:-admin}
@@ -50,6 +51,7 @@ services:
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-5007}:5007"
     environment:
+      TZ: ${TZ:-UTC}
       HEALTH_PORT: "5007"
       ENVELOPE_API_HOST: 0.0.0.0
       ENVELOPE_API_PORT: "5007"

@@ -4,7 +4,7 @@
 // the same engine calls the app makes: sync before reads, sync after writes.
 import express, { type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
-import { normalizeStartDay, parseAmount, periodRange } from '@envelope/core';
+import { currentPeriod, dates, normalizeStartDay, parseAmount, periodRange } from '@envelope/core';
 import type { init } from '@envelope/api';
 
 type Api = Awaited<ReturnType<typeof init>>;
@@ -444,6 +444,92 @@ export function createHttpApi(opts: HttpApiOptions) {
           spent: m.totalSpent,
           balance: m.totalBalance,
           categories: l.categories.map((c: any) => ({ id: c.id, name: c.name, group: c.group_name, ...(m.categories[c.id] ?? {}) })),
+        },
+      });
+    }),
+  );
+
+  // One call with everything an assistant needs to reason about a period:
+  // names to map free text onto, where the money went, and recent activity.
+  // Amounts here are in currency units (e.g. 25000 for Rp25.000), not cents.
+  app.get(
+    '/v1/budgets/:budget/summary',
+    route(async (req, res) => {
+      await openBudget(String(req.params.budget), true);
+      const prefs = await api.send('prefs-get');
+      const startDay = normalizeStartDay(prefs.monthStartDay ?? 1);
+      const month = req.query.month ? String(req.query.month) : currentPeriod(startDay);
+      if (!/^\d{4}-\d{2}$/.test(month)) throw new HttpError(400, 'invalid-month', 'month must look like 2026-10');
+      const { start, end } = periodRange(month, startDay);
+      const prev = dates.addMonths(month, -1);
+      const units = (c: number) => Math.round(c) / 100;
+      const [l, m, pm, txns, groups] = await Promise.all([
+        lookups(),
+        api.send('budget-month', { month }),
+        api.send('budget-month', { month: prev }),
+        api.send('transactions-get', { startDate: start, endDate: end }),
+        api.send('categories-get'),
+      ]);
+      const name = (list: any[], id: string | null) => (id ? list.find(x => x.id === id)?.name ?? null : null);
+      // Spending by payee, splits included, transfers excluded.
+      const byPayee = new Map<string, number>();
+      for (const t of txns) {
+        if (t.transfer_id) continue;
+        const parts = t.subtransactions?.length ? t.subtransactions.map((s: any) => ({ ...s, payee: s.payee ?? t.payee })) : [t];
+        for (const p of parts) {
+          if (p.amount >= 0) continue;
+          const n = name(l.payees, p.payee) ?? 'No payee';
+          byPayee.set(n, (byPayee.get(n) ?? 0) - p.amount);
+        }
+      }
+      const payeeName = (id: string | null) => {
+        const p = id ? l.payees.find((x: any) => x.id === id) : null;
+        return p ? (p.transfer_acct ? `Transfer: ${name(l.accounts, p.transfer_acct)}` : p.name) : null;
+      };
+      res.json({
+        data: {
+          month,
+          start,
+          end,
+          today: dates.today(),
+          month_start_day: startDay,
+          amounts_in: 'currency units (not cents)',
+          currency_symbol: prefs.currencySymbol ?? null,
+          budget_type: prefs.budgetType ?? 'envelope',
+          totals: {
+            to_budget: units(m.toBudget),
+            income: units(m.income),
+            budgeted: units(m.totalBudgeted),
+            spent: units(-m.totalSpent),
+            available_in_categories: units(m.totalBalance),
+          },
+          previous_period: { month: prev, income: units(pm.income), spent: units(-pm.totalSpent) },
+          accounts: l.accounts
+            .filter((a: any) => !a.closed)
+            .map((a: any) => ({ name: a.name, type: a.offbudget ? 'off-budget' : 'on-budget', balance: units(a.balance) })),
+          categories: groups.flatMap((g: any) =>
+            g.categories
+              .filter((c: any) => !c.hidden && !g.hidden)
+              .map((c: any) => {
+                const v = m.categories[c.id] ?? { budgeted: 0, spent: 0, balance: 0 };
+                return g.is_income
+                  ? { group: g.name, name: c.name, income: true, received: units(v.spent) }
+                  : { group: g.name, name: c.name, budgeted: units(v.budgeted), spent: units(-v.spent), balance: units(v.balance), overspent: v.balance < 0 };
+              }),
+          ),
+          top_payees: [...byPayee.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([payee, spent]) => ({ payee, spent: units(spent) })),
+          recent_transactions: txns.slice(0, 20).map((t: any) => ({
+            date: t.date,
+            account: name(l.accounts, t.account),
+            payee: payeeName(t.payee),
+            category: t.subtransactions?.length ? 'Split' : name(l.categories, t.category),
+            amount: units(t.amount),
+            notes: t.notes,
+          })),
+          transaction_count: txns.length,
         },
       });
     }),
