@@ -44,7 +44,9 @@ export function listen(fn: (e: EngineEvent) => void) {
   };
 }
 
-// Persist pending writes when the tab is hidden or closed.
+// Persist pending writes when the tab is hidden or closed; pull changes from
+// other devices (e.g. the iPhone app) as soon as it is shown again.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') void send('__flush');
+  else void send('sync-now').catch(() => {});
 });
