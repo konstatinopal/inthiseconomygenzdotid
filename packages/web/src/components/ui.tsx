@@ -237,8 +237,9 @@ export function Confirm({
             className={danger ? 'danger solid' : 'primary'}
             autoFocus
             onClick={() => {
-              onClose();
+              // Confirm first: closing resolves a pending confirmDialog() with false.
               onConfirm();
+              onClose();
             }}
           >
             {confirmLabel}

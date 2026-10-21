@@ -93,7 +93,7 @@ export function AccountPage() {
       disabled: selected.size !== 2,
       onClick: async () => {
         const [a, b] = [...selected];
-        if (await act('transactions-merge', { a, b }, 'Transactions merged')) setSelected(new Set());
+        if ((await act('transactions-merge', { a, b }, 'Transactions merged')) !== undefined) setSelected(new Set());
       },
     },
     {

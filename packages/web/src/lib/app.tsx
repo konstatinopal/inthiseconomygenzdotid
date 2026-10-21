@@ -204,7 +204,8 @@ export function useAction() {
       try {
         const r = await send<T>(name, args);
         if (success) notify('success', success);
-        return r;
+        // undefined means "failed" to callers; handlers that return nothing succeeded.
+        return (r === undefined ? null : r) as T;
       } catch (e: any) {
         notify('error', e.message ?? String(e));
         return undefined;

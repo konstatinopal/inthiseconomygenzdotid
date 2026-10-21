@@ -129,7 +129,12 @@ export function Register(props: RegisterProps) {
   };
 
   const onKeyDown = async (e: React.KeyboardEvent) => {
-    if ((e.target as HTMLElement) !== e.currentTarget) return;
+    // Keys typed in the editor or other fields are theirs; a row's select checkbox counts as the list
+    // (people tick a row, then press Delete).
+    const target = e.target as HTMLElement;
+    const rowCheckbox = target instanceof HTMLInputElement && target.type === 'checkbox' && !!target.closest('.reg-row');
+    if (target !== e.currentTarget && !rowCheckbox) return;
+    if (rowCheckbox && e.key === ' ') return; // the checkbox toggles itself
     const it = items[focus];
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -450,6 +455,18 @@ function TxnEditor({
     }
   };
 
+  const remove = async () => {
+    if (!txn) return;
+    const what = txn.transfer_id ? ' Its other side in the transfer account is deleted too.' : txn.is_parent ? ' All its split lines are deleted too.' : '';
+    if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete this transaction?${what}`, danger: true, confirmLabel: 'Delete' }))) return;
+    try {
+      await send('transaction-delete', { id: txn.id });
+      onDone();
+    } catch (e: any) {
+      notify('error', e.message);
+    }
+  };
+
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.defaultPrevented) {
       e.preventDefault();
@@ -608,6 +625,11 @@ function TxnEditor({
         {error && <span className="err">{error}</span>}
         <div className="spacer" />
         <span className="dim small">Enter to save · Esc to cancel</span>
+        {!isNew && (
+          <button className="small danger" onClick={() => void remove()}>
+            Delete
+          </button>
+        )}
         <button className="small" onClick={onDone}>
           {isNew ? 'Done' : 'Cancel'}
         </button>
